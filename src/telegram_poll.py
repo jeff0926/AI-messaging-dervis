@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.adapters.telegram import TelegramAdapter
 from src.adapters.webhook import WebhookAdapter
+from src.agents.agent_manager import AgentManager
 from src.agents.registry import AgentRegistry
 from src.agents.research_agent import ResearchAgent
 from src.services.messaging import MessagingService
@@ -40,6 +41,7 @@ async def main():
     # Bootstrap the pipeline
     registry = AgentRegistry()
     registry.register(ResearchAgent())
+    registry.register(AgentManager(registry))
 
     orchestrator = Orchestrator(registry)
     messaging = MessagingService(orchestrator)

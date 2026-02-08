@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 
 from src.adapters.telegram import TelegramAdapter
 from src.adapters.webhook import WebhookAdapter
+from src.agents.agent_manager import AgentManager
 from src.agents.registry import AgentRegistry
 from src.agents.research_agent import ResearchAgent
 from src.services.messaging import MessagingService
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 registry = AgentRegistry()
 registry.register(ResearchAgent())
+registry.register(AgentManager(registry))
 
 orchestrator = Orchestrator(registry)
 messaging = MessagingService(orchestrator)
