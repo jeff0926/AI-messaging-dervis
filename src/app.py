@@ -12,6 +12,7 @@ from src.adapters.slack import SlackAdapter
 from src.adapters.telegram import TelegramAdapter
 from src.adapters.webhook import WebhookAdapter
 from src.agents.agent_manager import AgentManager
+from src.agents.catalog_manager import CatalogManager
 from src.agents.claude_agent import ClaudeAgent
 from src.agents.registry import AgentRegistry
 from src.agents.research_agent import ResearchAgent
@@ -33,6 +34,7 @@ registry = AgentRegistry()
 registry.register(ResearchAgent())
 registry.register(ClaudeAgent())
 registry.register(AgentManager(registry))
+registry.register(CatalogManager())
 
 orchestrator = Orchestrator(registry)
 registry.set_orchestrator(orchestrator)

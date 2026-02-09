@@ -11,6 +11,7 @@ Most frameworks solve one problem — LangChain does LLM orchestration, Slack Bo
 - **Agent-to-Agent (A2A) communication** through the same orchestrator users interact with
 - **LLM agents, template agents, and dynamic agents** all share the same registry and routing
 - **Conversation memory** — Claude remembers context across messages per user
+- **Function Catalog** — save, browse, search, and tag reusable function definitions from chat
 - **Admin security** — restrict who can create/modify agents in production
 
 ## Prerequisites
@@ -37,7 +38,10 @@ graph TD
     REG --- CA[claude_agent]
     REG --- RA[research_agent]
     REG --- AM[agent_manager]
+    REG --- CM[catalog]
     REG --- DYN[dynamic agents...]
+
+    CM ---|save/get| FC[(Function Catalog)]
 
     ORCH -->|A2A calls| ORCH
 
@@ -192,6 +196,33 @@ Spin up new agents, add actions, and manage them — all from Telegram. No code 
 ```
 
 Custom agents persist to `data/agents/` as JSON and survive restarts.
+
+### catalog — Function Catalog
+
+Save, browse, search, and manage reusable function definitions. This is the building block library for composing agents from modular pieces.
+
+| Action | Use Case | Example |
+|---|---|---|
+| `save` | Save a reusable function to the catalog | `/catalog save find_trending "Search trending topics for a subject"` |
+| `list` | Browse all functions in the catalog | `/catalog list` |
+| `info` | View details and source for a specific function | `/catalog info find_trending` |
+| `search` | Search functions by name, description, or tag | `/catalog search research` |
+| `tag` | Add searchable tags to a function | `/catalog tag find_trending research trends social` |
+| `delete` | Remove a function from the catalog | `/catalog delete find_trending` |
+| `help` | Show catalog usage guide | `/catalog help` |
+
+**Example: Build a function library from chat:**
+```
+/catalog save find_trending "Search trending topics for a subject area"
+/catalog save get_topic_details "Get description and details for a topic"
+/catalog save find_social_handles "Find social media handles and URLs for a topic"
+/catalog tag find_trending research trends
+/catalog tag find_social_handles social media
+/catalog search research    → shows find_trending
+/catalog list               → shows all 3 functions
+```
+
+Functions persist to `data/functions/` as JSON and survive restarts.
 
 ### Telegram Quick Commands
 
@@ -396,6 +427,7 @@ Commands work the same way across all channels:
 | `claude_agent` `ask` action | **Stateful** | Per-user conversation memory (in-memory, last 20 messages) |
 | `claude_agent` other actions | Stateless | Each call is independent |
 | Dynamic agents | **Persisted** | Saved as JSON in `data/agents/`, survives restarts |
+| Function Catalog | **Persisted** | Saved as JSON in `data/functions/`, survives restarts |
 | Conversation memory | In-memory | Lost on restart (swap to Redis/DB for production) |
 | Agent Registry | In-memory | Rebuilt on startup from code + saved JSON files |
 
@@ -414,7 +446,8 @@ src/
 │   ├── research_agent.py      # Research agent (template-based)
 │   ├── claude_agent.py        # Claude API agent with conversation memory
 │   ├── dynamic_agent.py       # Runtime-created agents with template responses
-│   └── agent_manager.py       # CRUD agents from chat + admin security
+│   ├── agent_manager.py       # CRUD agents from chat + admin security
+│   └── catalog_manager.py     # Function catalog management from chat
 ├── adapters/
 │   ├── base.py                # BaseChannelAdapter abstract class
 │   ├── telegram.py            # Telegram Bot API (parse + send)
@@ -424,14 +457,16 @@ src/
 │   ├── orchestrator.py        # Namespace routing + A2A dispatch + depth guard
 │   ├── messaging.py           # Adapter ↔ Orchestrator bridge
 │   ├── conversation.py        # Per-user conversation memory store
+│   ├── function_catalog.py    # Persistent function catalog (save/search/tag)
 │   └── task_queue.py          # Async background task runner
 ├── middleware/
 │   └── auth.py                # API key authentication
 ├── app.py                     # FastAPI server (webhook mode)
 └── telegram_poll.py           # Telegram polling (no ngrok needed)
-tests/                         # 54 tests covering all components
+tests/                         # 81 tests covering all components
 config/
 data/agents/                   # Persisted dynamic agents (JSON)
+data/functions/                # Persisted function catalog (JSON)
 ```
 
 ## Data Flow
@@ -450,7 +485,7 @@ data/agents/                   # Persisted dynamic agents (JSON)
 python -m pytest tests/ -v
 ```
 
-54 tests covering schemas, registry, pipeline, Telegram adapter, A2A communication, A2A depth guard, admin security, conversation memory, @action decorator, auth middleware, and async task queue.
+81 tests covering schemas, registry, pipeline, Telegram adapter, A2A communication, A2A depth guard, admin security, conversation memory, @action decorator, function catalog, auth middleware, and async task queue.
 
 ## License
 

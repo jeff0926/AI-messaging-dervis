@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.adapters.telegram import TelegramAdapter
 from src.adapters.webhook import WebhookAdapter
 from src.agents.agent_manager import AgentManager
+from src.agents.catalog_manager import CatalogManager
 from src.agents.claude_agent import ClaudeAgent
 from src.agents.registry import AgentRegistry
 from src.agents.research_agent import ResearchAgent
@@ -124,6 +125,39 @@ ACTION_GUIDE = {
             },
         },
     },
+    "catalog": {
+        "description": "Function catalog — browse, save, and manage reusable functions",
+        "actions": {
+            "save": {
+                "example": '/catalog save find_trending "Search trending topics for a subject"',
+                "use_case": "Save a reusable function to the catalog",
+            },
+            "list": {
+                "example": "/catalog list",
+                "use_case": "Browse all functions in the catalog",
+            },
+            "info": {
+                "example": "/catalog info find_trending",
+                "use_case": "View details and source for a specific function",
+            },
+            "search": {
+                "example": "/catalog search research",
+                "use_case": "Search functions by name, description, or tag",
+            },
+            "tag": {
+                "example": "/catalog tag find_trending research trends social",
+                "use_case": "Add searchable tags to a function",
+            },
+            "delete": {
+                "example": "/catalog delete find_trending",
+                "use_case": "Remove a function from the catalog",
+            },
+            "help": {
+                "example": "/catalog help",
+                "use_case": "Show catalog usage guide",
+            },
+        },
+    },
 }
 
 
@@ -189,6 +223,7 @@ async def main():
     registry.register(ResearchAgent())
     registry.register(ClaudeAgent())
     registry.register(AgentManager(registry))
+    registry.register(CatalogManager())
 
     orchestrator = Orchestrator(registry)
     registry.set_orchestrator(orchestrator)
