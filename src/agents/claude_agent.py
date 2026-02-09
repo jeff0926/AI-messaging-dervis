@@ -31,9 +31,28 @@ class ClaudeAgent(BaseAgent):
 
     namespace = "claude_agent"
 
+    ACTIONS = {
+        "ask": "You are a helpful assistant. Answer clearly and concisely.",
+        "code": (
+            "You are an expert programmer. Provide clean, well-commented code. "
+            "Use markdown code blocks with language tags."
+        ),
+        "summarize": (
+            "Summarize the following text clearly and concisely. "
+            "Use bullet points for key takeaways."
+        ),
+        "analyze": (
+            "You are a research analyst. Provide a thorough analysis with "
+            "multiple perspectives, evidence, and a clear conclusion."
+        ),
+    }
+
     def __init__(self, api_key: str | None = None, model: str = DEFAULT_MODEL) -> None:
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY", "")
         self.model = model
+
+    def capabilities(self) -> list[str]:
+        return list(self.ACTIONS.keys())
 
     async def handle(self, payload: AgentPayload) -> Notification:
         if not self.api_key:
@@ -51,21 +70,7 @@ class ClaudeAgent(BaseAgent):
                 f"No query provided. Usage: /claude_agent {action} \"your question\"",
             )
 
-        system_prompts = {
-            "ask": "You are a helpful assistant. Answer clearly and concisely.",
-            "code": (
-                "You are an expert programmer. Provide clean, well-commented code. "
-                "Use markdown code blocks with language tags."
-            ),
-            "summarize": (
-                "Summarize the following text clearly and concisely. "
-                "Use bullet points for key takeaways."
-            ),
-            "analyze": (
-                "You are a research analyst. Provide a thorough analysis with "
-                "multiple perspectives, evidence, and a clear conclusion."
-            ),
-        }
+        system_prompts = self.ACTIONS
 
         system = system_prompts.get(action)
         if system is None:
