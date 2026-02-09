@@ -92,12 +92,19 @@ class TelegramAdapter(BaseChannelAdapter):
         text = self._format_message(notification)
 
         async with httpx.AsyncClient() as client:
+            # Try Markdown first, fall back to plain text if Telegram rejects it
             resp = await client.post(
                 f"{self._api_base}/sendMessage",
                 json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
             )
             if resp.status_code != 200:
-                logger.error("Telegram sendMessage failed: %s", resp.text)
+                logger.warning("Markdown sendMessage failed, retrying as plain text: %s", resp.text)
+                resp = await client.post(
+                    f"{self._api_base}/sendMessage",
+                    json={"chat_id": chat_id, "text": text},
+                )
+                if resp.status_code != 200:
+                    logger.error("Telegram sendMessage failed: %s", resp.text)
 
     @staticmethod
     def _format_message(notification: Notification) -> str:
