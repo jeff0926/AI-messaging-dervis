@@ -50,27 +50,128 @@ async def _send_help(client, api_base, chat_id, registry):
     )
 
 
+
+# Action examples and use cases for built-in agents
+ACTION_GUIDE = {
+    "claude_agent": {
+        "description": "AI-powered assistant using Claude",
+        "actions": {
+            "ask": {
+                "example": '/claude_agent ask "What causes inflation?"',
+                "use_case": "General Q&A — get clear answers on any topic",
+            },
+            "code": {
+                "example": '/claude_agent code "Write a Python function to merge two sorted lists"',
+                "use_case": "Code generation — get working code with explanations",
+            },
+            "summarize": {
+                "example": '/claude_agent summarize "Paste a long article or paragraph here"',
+                "use_case": "Condense long text into key bullet points",
+            },
+            "analyze": {
+                "example": '/claude_agent analyze "Impact of remote work on productivity"',
+                "use_case": "Deep analysis — multiple perspectives with evidence",
+            },
+        },
+    },
+    "research_agent": {
+        "description": "Autonomous research assistant",
+        "actions": {
+            "run_autonomous_research": {
+                "example": '/research_agent run_autonomous_research "Quantum Computing"',
+                "use_case": "Kick off a full research task on any topic",
+            },
+            "summarize": {
+                "example": '/research_agent summarize "Your text here"',
+                "use_case": "Quick summary of provided text",
+            },
+        },
+    },
+    "agent_manager": {
+        "description": "Create and manage custom agents from chat",
+        "actions": {
+            "create": {
+                "example": '/agent_manager create my_bot "A helpful bot"',
+                "use_case": "Spin up a new custom agent on the fly",
+            },
+            "add_action": {
+                "example": '/agent_manager add_action my_bot:greet "Hello {query}!"',
+                "use_case": "Teach your agent a new command with a response template",
+            },
+            "list": {
+                "example": "/agent_manager list",
+                "use_case": "See all agents and their available commands",
+            },
+            "info": {
+                "example": "/agent_manager info my_bot",
+                "use_case": "See details about a specific agent",
+            },
+            "remove_action": {
+                "example": "/agent_manager remove_action my_bot:greet",
+                "use_case": "Remove a command from a custom agent",
+            },
+            "delete": {
+                "example": "/agent_manager delete my_bot",
+                "use_case": "Delete a custom agent entirely",
+            },
+            "help": {
+                "example": "/agent_manager help",
+                "use_case": "Show agent manager usage guide",
+            },
+        },
+    },
+}
+
+
 async def _send_full_help(client, api_base, chat_id, registry):
-    """Full agent directory with every agent and action."""
+    """Full agent directory with examples and use cases."""
     lines = ["All available agents and commands:\n"]
+
     for agent_desc in registry.list_agents():
         ns = agent_desc["namespace"]
-        lines.append(f"/{ns}")
-        if agent_desc.get("description"):
-            lines.append(f"  {agent_desc['description']}")
+        guide = ACTION_GUIDE.get(ns)
+
+        # Agent header
+        desc = (guide["description"] if guide else
+                agent_desc.get("description", ""))
+        lines.append(f"--- {ns} ---")
+        if desc:
+            lines.append(f"{desc}\n")
+
         caps = agent_desc.get("capabilities", [])
-        if caps:
-            for cap in caps:
-                lines.append(f"  - /{ns} {cap}")
-        else:
-            lines.append("  (no actions yet)")
-        lines.append("")
+        if not caps:
+            lines.append("  (no actions yet)\n")
+            continue
+
+        for cap in caps:
+            action_guide = guide["actions"].get(cap) if guide else None
+            if action_guide:
+                lines.append(f"/{ns} {cap}")
+                lines.append(f"  Use case: {action_guide['use_case']}")
+                lines.append(f"  Example:  {action_guide['example']}")
+                lines.append("")
+            else:
+                lines.append(f"/{ns} {cap}\n")
 
     lines.append("Tip: /agent_manager help — manage custom agents")
-    await client.post(
-        f"{api_base}/sendMessage",
-        json={"chat_id": chat_id, "text": "\n".join(lines)},
-    )
+
+    text = "\n".join(lines)
+    # Telegram has a 4096 char limit per message
+    if len(text) > 4000:
+        mid = len(lines) // 2
+        await client.post(
+            f"{api_base}/sendMessage",
+            json={"chat_id": chat_id, "text": "\n".join(lines[:mid])},
+        )
+        await client.post(
+            f"{api_base}/sendMessage",
+            json={"chat_id": chat_id, "text": "\n".join(lines[mid:])},
+        )
+    else:
+        await client.post(
+            f"{api_base}/sendMessage",
+            json={"chat_id": chat_id, "text": text},
+        )
 
 
 async def main():
