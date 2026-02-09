@@ -1,4 +1,4 @@
-"""Claude Agent — LLM-powered agent using the Anthropic API."""
+"""Claude Agent — LLM-powered agent using the Anthropic API with conversation memory."""
 
 from __future__ import annotations
 
@@ -8,7 +8,9 @@ import os
 import httpx
 
 from src.agents.base import BaseAgent
+from src.agents.decorators import action
 from src.schemas import AgentPayload, Notification, NotificationStatus
+from src.services.conversation import conversation_store
 
 logger = logging.getLogger(__name__)
 
@@ -18,15 +20,12 @@ MAX_TOKENS = 1024
 
 
 class ClaudeAgent(BaseAgent):
-    """Agent that forwards queries to the Claude API.
+    """Agent that forwards queries to the Claude API with conversation memory.
 
     Namespace: ``claude_agent``
 
-    Actions:
-        - ask: general question answering
-        - code: code generation / explanation
-        - summarize: summarize provided text
-        - analyze: deeper analysis of a topic
+    The ``ask`` action maintains per-user conversation history so Claude
+    remembers context across messages. Use ``clear`` to reset.
     """
 
     namespace = "claude_agent"
@@ -52,36 +51,48 @@ class ClaudeAgent(BaseAgent):
         self.model = model
 
     def capabilities(self) -> list[str]:
-        return list(self.ACTIONS.keys())
+        return list(self.ACTIONS.keys()) + ["clear"]
 
     async def handle(self, payload: AgentPayload) -> Notification:
+        if payload.action == "clear":
+            return await self._clear_history(payload)
+
         if not self.api_key:
             return self._reply(
                 payload, NotificationStatus.FAILED,
                 "ANTHROPIC_API_KEY not configured. Add it to your .env file.",
             )
 
-        action = payload.action
+        act = payload.action
         query = payload.payload.get("query", "")
 
         if not query:
             return self._reply(
                 payload, NotificationStatus.FAILED,
-                f"No query provided. Usage: /claude_agent {action} \"your question\"",
+                f"No query provided. Usage: /claude_agent {act} \"your question\"",
             )
 
-        system_prompts = self.ACTIONS
-
-        system = system_prompts.get(action)
+        system = self.ACTIONS.get(act)
         if system is None:
             return self._reply(
                 payload, NotificationStatus.FAILED,
-                f"Unknown action: {action}\n"
-                f"Available: {list(system_prompts.keys())}",
+                f"Unknown action: {act}\n"
+                f"Available: {self.capabilities()}",
             )
 
+        user_id = payload.context.get("user_id", "unknown")
+        channel = payload.context.get("source_channel", "")
+
+        # Build message history for the ask action (conversational memory)
+        if act == "ask":
+            conversation_store.add_user_message(user_id, query, channel)
+            messages = conversation_store.get_history(user_id, channel)
+        else:
+            # Non-conversational actions: single message, no history
+            messages = [{"role": "user", "content": query}]
+
         try:
-            response_text = await self._call_claude(system, query)
+            response_text = await self._call_claude(system, messages)
         except Exception as exc:
             logger.exception("Claude API call failed")
             return self._reply(
@@ -89,9 +100,24 @@ class ClaudeAgent(BaseAgent):
                 f"Claude API error: {exc}",
             )
 
+        # Save assistant response to history for ask action
+        if act == "ask":
+            conversation_store.add_assistant_message(user_id, response_text, channel)
+
         return self._reply(payload, NotificationStatus.COMPLETED, response_text)
 
-    async def _call_claude(self, system: str, user_message: str) -> str:
+    async def _clear_history(self, payload: AgentPayload) -> Notification:
+        user_id = payload.context.get("user_id", "unknown")
+        channel = payload.context.get("source_channel", "")
+        conversation_store.clear(user_id, channel)
+        return self._reply(
+            payload, NotificationStatus.COMPLETED,
+            "Conversation history cleared. Starting fresh.",
+        )
+
+    async def _call_claude(
+        self, system: str, messages: list[dict[str, str]]
+    ) -> str:
         headers = {
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
@@ -101,7 +127,7 @@ class ClaudeAgent(BaseAgent):
             "model": self.model,
             "max_tokens": MAX_TOKENS,
             "system": system,
-            "messages": [{"role": "user", "content": user_message}],
+            "messages": messages,
         }
 
         async with httpx.AsyncClient(timeout=60) as client:

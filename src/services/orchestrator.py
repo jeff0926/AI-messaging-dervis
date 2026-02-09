@@ -11,10 +11,14 @@ from src.schemas import AgentPayload, Command, Notification, NotificationStatus
 logger = logging.getLogger(__name__)
 
 
+A2A_MAX_DEPTH = 5  # Maximum depth for agent-to-agent call chains
+
+
 class Orchestrator:
     """Receives Commands, resolves the target agent via the Registry, and dispatches.
 
-    Also provides ``agent_call`` for agent-to-agent communication.
+    Also provides ``agent_call`` for agent-to-agent communication with
+    a depth limit to prevent infinite loops.
     """
 
     def __init__(self, registry: AgentRegistry) -> None:
@@ -69,7 +73,27 @@ class Orchestrator:
         """Allow one agent to call another through the orchestrator.
 
         This is the Agent-to-Agent (A2A) communication channel.
+        Enforces a max call depth to prevent infinite loops.
         """
+        # --- Depth guard ---
+        current_depth = 0
+        if parent_payload:
+            current_depth = parent_payload.context.get("_a2a_depth", 0)
+        if current_depth >= A2A_MAX_DEPTH:
+            logger.error(
+                "A2A max depth (%d) exceeded: %s → %s:%s",
+                A2A_MAX_DEPTH, caller_namespace, target_namespace, action,
+            )
+            return Notification(
+                task_id="",
+                command_id=parent_payload.command_id if parent_payload else "",
+                status=NotificationStatus.FAILED,
+                target_channel="internal",
+                target_user_id="system",
+                message=f"A2A call chain exceeded max depth ({A2A_MAX_DEPTH}). "
+                "Possible circular dependency.",
+            )
+
         agent = self.registry.get(target_namespace)
         if agent is None:
             return Notification(
@@ -91,12 +115,14 @@ class Orchestrator:
                 "source_channel": "internal",
                 "user_id": "system",
                 "caller": caller_namespace,
+                "_a2a_depth": current_depth + 1,
                 **(parent_payload.context if parent_payload else {}),
             },
         )
 
         logger.info(
-            "A2A call: %s → %s:%s (task %s)",
+            "A2A call (depth %d): %s → %s:%s (task %s)",
+            current_depth + 1,
             caller_namespace,
             target_namespace,
             action,

@@ -16,24 +16,25 @@ logger = logging.getLogger(__name__)
 
 AGENTS_DIR = Path(os.getenv("AGENTS_DIR", "data/agents"))
 
+# Comma-separated Telegram user IDs that can manage agents.
+# If empty, all users are allowed (open mode).
+_ADMIN_IDS_RAW = os.getenv("ADMIN_USER_IDS", "")
+ADMIN_USER_IDS: set[str] = {
+    uid.strip() for uid in _ADMIN_IDS_RAW.split(",") if uid.strip()
+}
+
+# Actions that don't require admin (read-only)
+_PUBLIC_ACTIONS = {"list", "info", "help"}
+
 
 class AgentManager(BaseAgent):
     """Meta-agent that manages other agents at runtime via Telegram.
 
     Namespace: ``agent_manager``
 
-    Commands from Telegram:
-        /agent_manager create my_bot "A helpful bot"
-        /agent_manager add_action my_bot:greet "Hello {query}! How can I help?"
-        /agent_manager add_action my_bot:joke "Why did {query} cross the road?"
-        /agent_manager list
-        /agent_manager info my_bot
-        /agent_manager remove_action my_bot:greet
-        /agent_manager delete my_bot
-
-    After creating my_bot and adding actions, use it directly:
-        /my_bot greet "World"       → "Hello World! How can I help?"
-        /my_bot joke "the chicken"  → "Why did the chicken cross the road?"
+    Write operations (create, delete, add_action, remove_action) are
+    restricted to admin users when ADMIN_USER_IDS is set in .env.
+    Read operations (list, info, help) are always public.
     """
 
     namespace = "agent_manager"
@@ -42,6 +43,10 @@ class AgentManager(BaseAgent):
         self.registry = registry
         AGENTS_DIR.mkdir(parents=True, exist_ok=True)
         self._load_saved_agents()
+        if ADMIN_USER_IDS:
+            logger.info("Agent manager admin IDs: %s", ADMIN_USER_IDS)
+        else:
+            logger.warning("ADMIN_USER_IDS not set — agent manager is open to all users")
 
     async def handle(self, payload: AgentPayload) -> Notification:
         action = payload.action
@@ -60,6 +65,14 @@ class AgentManager(BaseAgent):
         if handler is None:
             return self._reply(payload, NotificationStatus.FAILED,
                                f"Unknown command: {action}\n\n{self._help_text()}")
+
+        # Admin check for write operations
+        if action not in _PUBLIC_ACTIONS and not self._is_admin(payload):
+            return self._reply(
+                payload, NotificationStatus.FAILED,
+                "Permission denied. Only admins can create/modify/delete agents.\n"
+                "Contact the bot owner to be added to ADMIN_USER_IDS.",
+            )
 
         return handler(payload, query)
 
@@ -232,6 +245,14 @@ class AgentManager(BaseAgent):
             data={"chat_id": payload.context.get("metadata", {}).get("chat_id")},
             message=message,
         )
+
+    @staticmethod
+    def _is_admin(payload: AgentPayload) -> bool:
+        """Check if the requesting user is an admin."""
+        if not ADMIN_USER_IDS:
+            return True  # Open mode — no restrictions
+        user_id = payload.context.get("user_id", "")
+        return user_id in ADMIN_USER_IDS
 
     @staticmethod
     def _help_text() -> str:

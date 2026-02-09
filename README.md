@@ -10,44 +10,69 @@ Most frameworks solve one problem — LangChain does LLM orchestration, Slack Bo
 - **Create agents from Telegram** — no code deployment needed
 - **Agent-to-Agent (A2A) communication** through the same orchestrator users interact with
 - **LLM agents, template agents, and dynamic agents** all share the same registry and routing
+- **Conversation memory** — Claude remembers context across messages per user
+- **Admin security** — restrict who can create/modify agents in production
+
+## Prerequisites
+
+| Requirement | Version | Notes |
+|---|---|---|
+| Python | 3.10+ | Uses `match` statements, `X \| Y` unions |
+| pip | latest | `pip install -r requirements.txt` |
+| Telegram Bot | — | Token from [@BotFather](https://t.me/BotFather) |
+| Anthropic API Key | — | From [Anthropic Console](https://console.anthropic.com/) (for Claude agent) |
+| Docker (optional) | 20+ | For containerized deployment |
 
 ## Architecture
 
+```mermaid
+graph TD
+    TG[Telegram Adapter] -->|Command| MS[Messaging Service]
+    SL[Slack Adapter] -->|Command| MS
+    WH[Webhook Adapter] -->|Command| MS
+
+    MS --> ORCH[Orchestrator]
+    ORCH -->|AgentPayload| REG[Agent Registry]
+
+    REG --- CA[claude_agent]
+    REG --- RA[research_agent]
+    REG --- AM[agent_manager]
+    REG --- DYN[dynamic agents...]
+
+    ORCH -->|A2A calls| ORCH
+
+    CA -->|Notification| MS
+    RA -->|Notification| MS
+    AM -->|Notification| MS
+    DYN -->|Notification| MS
+
+    MS -->|Response| TG
+    MS -->|Response| SL
+    MS -->|Response| WH
 ```
-┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│   Telegram   │   │    Slack     │   │   Webhook    │
-│   Adapter    │   │   Adapter    │   │   Adapter    │
-└──────┬───────┘   └──────┬───────┘   └──────┬───────┘
-       │                  │                  │
-       └──────────────────┼──────────────────┘
-                          │ Command
-                          ▼
-                ┌───────────────────┐
-                │ Messaging Service │
-                └────────┬──────────┘
-                         │
-                         ▼
-                ┌───────────────────┐
-                │   Orchestrator    │──── A2A calls ────┐
-                │  (namespace       │                   │
-                │   routing)        │◄──────────────────┘
-                └────────┬──────────┘
-                         │ AgentPayload
-                         ▼
-                ┌───────────────────┐
-                │  Agent Registry   │
-                │                   │
-                │  ┌─────────────┐  │
-                │  │ claude_agent│  │
-                │  │ research    │  │
-                │  │ agent_mgr   │  │
-                │  │ (dynamic…)  │  │
-                │  └─────────────┘  │
-                └───────────────────┘
-                         │
-                         ▼ Notification
-                 (back through adapter
-                  to the user)
+
+### Request Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant T as Telegram Adapter
+    participant M as Messaging Service
+    participant O as Orchestrator
+    participant R as Agent Registry
+    participant A as Claude Agent
+
+    U->>T: /claude_agent ask "What is AI?"
+    T->>M: Command(namespace, action, params)
+    M->>O: dispatch(command)
+    O->>R: get("claude_agent")
+    R-->>O: ClaudeAgent instance
+    O->>A: handle(AgentPayload)
+    A->>A: Conversation memory lookup
+    A-->>O: Notification(status=completed)
+    O-->>M: Notification
+    M->>T: send_notification()
+    T-->>U: Reply message
 ```
 
 ## Quick Start
@@ -73,7 +98,6 @@ Most frameworks solve one problem — LangChain does LLM orchestration, Slack Bo
 ```powershell
 git clone https://github.com/jeff0926/AI-messaging-dervis.git
 cd AI-messaging-dervis
-git checkout claude/check-system-status-HhGZk
 pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your tokens
@@ -90,7 +114,6 @@ python src/telegram_poll.py
 ```bash
 git clone https://github.com/jeff0926/AI-messaging-dervis.git
 cd AI-messaging-dervis
-git checkout claude/check-system-status-HhGZk
 pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your tokens
@@ -113,6 +136,7 @@ Copy `.env.example` to `.env` and fill in:
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Yes (for Telegram) | Token from [@BotFather](https://t.me/BotFather) |
 | `ANTHROPIC_API_KEY` | Yes (for Claude agent) | Key from [Anthropic Console](https://console.anthropic.com/) |
+| `ADMIN_USER_IDS` | No | Comma-separated Telegram user IDs for admin access (see [Security](#security)) |
 | `SLACK_BOT_TOKEN` | No | Slack Bot OAuth token |
 | `SLACK_SIGNING_SECRET` | No | Slack app signing secret |
 | `API_KEY` | No | API key for webhook auth |
@@ -123,14 +147,17 @@ Copy `.env.example` to `.env` and fill in:
 
 ### claude_agent — AI-Powered Assistant
 
-Uses the Claude API for intelligent responses.
+Uses the Claude API for intelligent responses. The `ask` action maintains **per-user conversation memory** — Claude remembers context across messages. Use `clear` to reset.
 
 | Action | Use Case | Example |
 |---|---|---|
-| `ask` | General Q&A — get clear answers on any topic | `/claude_agent ask "What causes inflation?"` |
-| `code` | Code generation — get working code with explanations | `/claude_agent code "Write a Python function to merge two sorted lists"` |
+| `ask` | General Q&A with conversation memory | `/claude_agent ask "What causes inflation?"` |
+| `code` | Code generation with explanations | `/claude_agent code "Write a Python function to merge two sorted lists"` |
 | `summarize` | Condense long text into key bullet points | `/claude_agent summarize "Paste a long article or paragraph here"` |
-| `analyze` | Deep analysis — multiple perspectives with evidence | `/claude_agent analyze "Impact of remote work on productivity"` |
+| `analyze` | Deep analysis with multiple perspectives | `/claude_agent analyze "Impact of remote work on productivity"` |
+| `clear` | Reset conversation history | `/claude_agent clear` |
+
+**Conversation Memory**: The `ask` action stores the last 20 messages per user per channel. Claude sees the full conversation history, so follow-up questions like "Can you explain that further?" work naturally. Other actions (`code`, `summarize`, `analyze`) are stateless — each call is independent.
 
 ### research_agent — Autonomous Research
 
@@ -174,9 +201,31 @@ Custom agents persist to `data/agents/` as JSON and survive restarts.
 | `/start` | Same as /help |
 | `/agent_manager list` | List all agents and their actions |
 
+## Security
+
+### Admin-Only Agent Management
+
+By default, the agent manager is **open mode** — any user can create/delete agents. For production, restrict write operations to specific users:
+
+```env
+# .env — comma-separated Telegram user IDs
+ADMIN_USER_IDS=123456789,987654321
+```
+
+| Operation | Requires Admin |
+|---|---|
+| `create`, `delete`, `add_action`, `remove_action` | Yes (when `ADMIN_USER_IDS` is set) |
+| `list`, `info`, `help` | No (always public) |
+
+**How to find your Telegram user ID:** Send a message to [@userinfobot](https://t.me/userinfobot) on Telegram.
+
+### API Key Authentication
+
+Set `AUTH_ENABLED=true` and `API_KEY=your-secret` in `.env`. Protected endpoints require an `X-API-Key` header. Public paths (`/health`, `/agents`) and channel webhooks (Telegram, Slack) are excluded.
+
 ## Agent-to-Agent (A2A) Communication
 
-Agents can call other agents through the orchestrator. Any agent with an orchestrator reference can do:
+Agents can call other agents through the orchestrator:
 
 ```python
 result = await self.call_agent(
@@ -187,95 +236,20 @@ result = await self.call_agent(
 )
 ```
 
-The orchestrator logs all A2A calls and handles errors, so agents can safely compose complex workflows by delegating subtasks.
+### Depth Guard
 
-## Webhook API
+A2A calls track call depth to prevent infinite loops. The maximum depth is **5** (`A2A_MAX_DEPTH`). If an agent chain exceeds this limit, the call fails with a clear error message. This protects against circular dependencies (e.g., Agent A calls Agent B which calls Agent A).
 
-```bash
-# Health check
-curl http://localhost:8000/health
+```mermaid
+graph LR
+    A[Agent A] -->|depth 1| B[Agent B]
+    B -->|depth 2| C[Agent C]
+    C -->|depth 3| D[Agent D]
+    D -->|depth 4| E[Agent E]
+    E -->|depth 5 MAX| F[BLOCKED]
 
-# List all agents and capabilities
-curl http://localhost:8000/agents
-
-# Send a command
-curl -X POST http://localhost:8000/webhook/webhook \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
-  -d '{"user_id":"test","namespace":"claude_agent","action":"ask","parameters":{"query":"What is AI?"}}'
-
-# Check background tasks
-curl http://localhost:8000/tasks
-curl http://localhost:8000/tasks/{task_id}
+    style F fill:#f66,stroke:#333,color:#fff
 ```
-
-### Authentication
-
-Set `AUTH_ENABLED=true` and `API_KEY=your-secret` in `.env`. Protected endpoints require an `X-API-Key` header. Public paths (`/health`, `/agents`) and channel webhooks (Telegram, Slack) are excluded.
-
-### Slack Integration
-
-1. Create a Slack app at https://api.slack.com/apps
-2. Add Bot Token Scopes: `chat:write`, `commands`
-3. Set the request URL to `http://your-host:8000/webhook/slack`
-4. Add `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` to `.env`
-
-Commands work the same way across all channels:
-```
-/research_agent run_autonomous_research "Quantum Computing"
-```
-
-## Project Structure
-
-```
-src/
-├── schemas/                   # Data models (Pydantic v2)
-│   ├── command.py             # Incoming request from any channel
-│   ├── agent_payload.py       # Orchestrator → Agent payload
-│   └── notification.py        # Agent → User response
-├── agents/
-│   ├── base.py                # BaseAgent abstract class + A2A call_agent()
-│   ├── registry.py            # Namespace → Agent lookup + orchestrator wiring
-│   ├── research_agent.py      # Research agent (template-based)
-│   ├── claude_agent.py        # Claude API-powered LLM agent
-│   ├── dynamic_agent.py       # Runtime-created agents with template responses
-│   └── agent_manager.py       # CRUD agents from Telegram chat
-├── adapters/
-│   ├── base.py                # BaseChannelAdapter abstract class
-│   ├── telegram.py            # Telegram Bot API (parse + send)
-│   ├── webhook.py             # Generic JSON webhook (pass-through)
-│   └── slack.py               # Slack Events API + slash commands
-├── services/
-│   ├── orchestrator.py        # Namespace routing + A2A dispatch
-│   ├── messaging.py           # Adapter ↔ Orchestrator bridge
-│   └── task_queue.py          # Async background task runner
-├── middleware/
-│   └── auth.py                # API key authentication
-├── app.py                     # FastAPI server (webhook mode)
-└── telegram_poll.py           # Telegram polling (no ngrok needed)
-tests/                         # 28 tests covering all components
-config/
-data/agents/                   # Persisted dynamic agents (JSON)
-```
-
-## Data Flow
-
-### Three schemas drive the entire pipeline:
-
-| Schema | Purpose | Fields |
-|---|---|---|
-| **Command** | Incoming user request (channel-agnostic) | user_id, namespace, action, parameters, metadata |
-| **AgentPayload** | What the orchestrator sends to an agent | task_id, command_id, payload, context |
-| **Notification** | What agents send back to the user | status, message, media, data, transformation_hints |
-
-### Request lifecycle:
-
-1. User sends `/claude_agent ask "What is AI?"` on Telegram
-2. **TelegramAdapter.parse_incoming()** → `Command(namespace="claude_agent", action="ask")`
-3. **MessagingService.handle_incoming()** → passes to Orchestrator
-4. **Orchestrator.dispatch()** → looks up `claude_agent` in Registry → calls `agent.handle()`
-5. **ClaudeAgent.handle()** → calls Anthropic API → returns `Notification(status=completed)`
-6. **TelegramAdapter.send_notification()** → formats and sends reply via Telegram API
 
 ## Adding a New Agent
 
@@ -287,47 +261,67 @@ data/agents/                   # Persisted dynamic agents (JSON)
 /weather_bot forecast "San Francisco"
 ```
 
-### Option 2: In code (for real logic)
-
-Create `src/agents/my_agent.py`:
+### Option 2: Using the @action decorator (recommended)
 
 ```python
 from src.agents.base import BaseAgent
+from src.agents.decorators import action
 from src.schemas import AgentPayload, Notification, NotificationStatus
 
 class MyAgent(BaseAgent):
     namespace = "my_agent"
 
-    async def handle(self, payload: AgentPayload) -> Notification:
-        action = getattr(self, f"action_{payload.action}", None)
-        if not action:
-            return Notification(
-                task_id=payload.task_id, command_id=payload.command_id,
-                status=NotificationStatus.FAILED,
-                target_channel=payload.context.get("source_channel", "unknown"),
-                target_user_id=payload.context.get("user_id", "unknown"),
-                message=f"Unknown action: {payload.action}",
-            )
-        return await action(payload)
-
-    async def action_hello(self, payload: AgentPayload) -> Notification:
+    @action(description="Greet someone by name")
+    async def greet(self, payload: AgentPayload) -> Notification:
         name = payload.payload.get("query", "World")
-
-        # Example: call another agent
-        summary = await self.call_agent(
-            "claude_agent", "summarize",
-            parameters={"query": f"Brief intro about {name}"},
-            parent_payload=payload,
-        )
-
         return Notification(
             task_id=payload.task_id, command_id=payload.command_id,
             status=NotificationStatus.COMPLETED,
             target_channel=payload.context.get("source_channel", "unknown"),
             target_user_id=payload.context.get("user_id", "unknown"),
             data={"chat_id": payload.context.get("metadata", {}).get("chat_id")},
-            message=f"Hello, {name}!\n\n{summary.message}",
+            message=f"Hello, {name}!",
         )
+
+    @action(name="search", description="Run a web search")
+    async def _internal_search(self, payload: AgentPayload) -> Notification:
+        query = payload.payload.get("query", "")
+        # ... your logic ...
+
+    async def handle(self, payload: AgentPayload) -> Notification:
+        handler = self.get_action_handler(payload.action)
+        if handler:
+            return await handler(payload)
+        return Notification(
+            task_id=payload.task_id, command_id=payload.command_id,
+            status=NotificationStatus.FAILED,
+            target_channel=payload.context.get("source_channel", "unknown"),
+            target_user_id=payload.context.get("user_id", "unknown"),
+            message=f"Unknown action: {payload.action}",
+        )
+```
+
+The `@action` decorator:
+- Auto-discovers actions via `capabilities()` and `describe()`
+- Supports custom names: `@action(name="search")` exposes `_internal_search` as `search`
+- Adds descriptions that show up in `/agent_manager info`
+- Coexists with the `action_*` naming convention
+
+### Option 3: action_* prefix convention
+
+```python
+class MyAgent(BaseAgent):
+    namespace = "my_agent"
+
+    async def handle(self, payload: AgentPayload) -> Notification:
+        action = getattr(self, f"action_{payload.action}", None)
+        if not action:
+            return Notification(...)
+        return await action(payload)
+
+    async def action_hello(self, payload: AgentPayload) -> Notification:
+        name = payload.payload.get("query", "World")
+        return Notification(...)
 ```
 
 Register in `src/telegram_poll.py` or `src/app.py`:
@@ -363,13 +357,100 @@ Register in `src/app.py`:
 messaging.register_adapter(DiscordAdapter(token="..."))
 ```
 
+## Webhook API
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# List all agents and capabilities
+curl http://localhost:8000/agents
+
+# Send a command
+curl -X POST http://localhost:8000/webhook/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{"user_id":"test","namespace":"claude_agent","action":"ask","parameters":{"query":"What is AI?"}}'
+
+# Check background tasks
+curl http://localhost:8000/tasks
+curl http://localhost:8000/tasks/{task_id}
+```
+
+### Slack Integration
+
+1. Create a Slack app at https://api.slack.com/apps
+2. Add Bot Token Scopes: `chat:write`, `commands`
+3. Set the request URL to `http://your-host:8000/webhook/slack`
+4. Add `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` to `.env`
+
+Commands work the same way across all channels:
+```
+/research_agent run_autonomous_research "Quantum Computing"
+```
+
+## Stateful vs Stateless
+
+| Component | State | Details |
+|---|---|---|
+| `claude_agent` `ask` action | **Stateful** | Per-user conversation memory (in-memory, last 20 messages) |
+| `claude_agent` other actions | Stateless | Each call is independent |
+| Dynamic agents | **Persisted** | Saved as JSON in `data/agents/`, survives restarts |
+| Conversation memory | In-memory | Lost on restart (swap to Redis/DB for production) |
+| Agent Registry | In-memory | Rebuilt on startup from code + saved JSON files |
+
+## Project Structure
+
+```
+src/
+├── schemas/                   # Data models (Pydantic v2)
+│   ├── command.py             # Incoming request from any channel
+│   ├── agent_payload.py       # Orchestrator → Agent payload
+│   └── notification.py        # Agent → User response
+├── agents/
+│   ├── base.py                # BaseAgent ABC + A2A call_agent() + action discovery
+│   ├── decorators.py          # @action decorator for declarative action authoring
+│   ├── registry.py            # Namespace → Agent lookup + orchestrator wiring
+│   ├── research_agent.py      # Research agent (template-based)
+│   ├── claude_agent.py        # Claude API agent with conversation memory
+│   ├── dynamic_agent.py       # Runtime-created agents with template responses
+│   └── agent_manager.py       # CRUD agents from chat + admin security
+├── adapters/
+│   ├── base.py                # BaseChannelAdapter abstract class
+│   ├── telegram.py            # Telegram Bot API (parse + send)
+│   ├── webhook.py             # Generic JSON webhook (pass-through)
+│   └── slack.py               # Slack Events API + slash commands
+├── services/
+│   ├── orchestrator.py        # Namespace routing + A2A dispatch + depth guard
+│   ├── messaging.py           # Adapter ↔ Orchestrator bridge
+│   ├── conversation.py        # Per-user conversation memory store
+│   └── task_queue.py          # Async background task runner
+├── middleware/
+│   └── auth.py                # API key authentication
+├── app.py                     # FastAPI server (webhook mode)
+└── telegram_poll.py           # Telegram polling (no ngrok needed)
+tests/                         # 54 tests covering all components
+config/
+data/agents/                   # Persisted dynamic agents (JSON)
+```
+
+## Data Flow
+
+### Three schemas drive the entire pipeline:
+
+| Schema | Purpose | Fields |
+|---|---|---|
+| **Command** | Incoming user request (channel-agnostic) | user_id, namespace, action, parameters, metadata |
+| **AgentPayload** | What the orchestrator sends to an agent | task_id, command_id, payload, context |
+| **Notification** | What agents send back to the user | status, message, media, data, transformation_hints |
+
 ## Running Tests
 
 ```bash
 python -m pytest tests/ -v
 ```
 
-28 tests covering schemas, registry, pipeline, Telegram adapter, A2A communication, auth middleware, and async task queue.
+54 tests covering schemas, registry, pipeline, Telegram adapter, A2A communication, A2A depth guard, admin security, conversation memory, @action decorator, auth middleware, and async task queue.
 
 ## License
 

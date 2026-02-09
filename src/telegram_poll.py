@@ -72,6 +72,10 @@ ACTION_GUIDE = {
                 "example": '/claude_agent analyze "Impact of remote work on productivity"',
                 "use_case": "Deep analysis — multiple perspectives with evidence",
             },
+            "clear": {
+                "example": "/claude_agent clear",
+                "use_case": "Reset conversation history and start fresh",
+            },
         },
     },
     "research_agent": {
