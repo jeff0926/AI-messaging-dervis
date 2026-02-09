@@ -7,13 +7,17 @@ import os
 
 from fastapi import FastAPI, HTTPException, Request
 
+from src.middleware.auth import ApiKeyMiddleware
+from src.adapters.slack import SlackAdapter
 from src.adapters.telegram import TelegramAdapter
 from src.adapters.webhook import WebhookAdapter
 from src.agents.agent_manager import AgentManager
+from src.agents.claude_agent import ClaudeAgent
 from src.agents.registry import AgentRegistry
 from src.agents.research_agent import ResearchAgent
 from src.services.messaging import MessagingService
 from src.services.orchestrator import Orchestrator
+from src.services.task_queue import task_queue
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,15 +31,26 @@ logger = logging.getLogger(__name__)
 
 registry = AgentRegistry()
 registry.register(ResearchAgent())
+registry.register(ClaudeAgent())
 registry.register(AgentManager(registry))
 
 orchestrator = Orchestrator(registry)
+registry.set_orchestrator(orchestrator)
 messaging = MessagingService(orchestrator)
 
 # Register channel adapters
 telegram_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
 if telegram_token:
     messaging.register_adapter(TelegramAdapter(bot_token=telegram_token))
+
+slack_token = os.getenv("SLACK_BOT_TOKEN", "")
+if slack_token:
+    messaging.register_adapter(
+        SlackAdapter(
+            bot_token=slack_token,
+            signing_secret=os.getenv("SLACK_SIGNING_SECRET", ""),
+        )
+    )
 
 messaging.register_adapter(WebhookAdapter())
 
@@ -48,6 +63,8 @@ app = FastAPI(
     version="0.1.0",
     description="Namespace-routed messaging pipeline for autonomous agents.",
 )
+
+app.add_middleware(ApiKeyMiddleware)
 
 
 @app.get("/health")
@@ -83,3 +100,21 @@ async def telegram_webhook(request: Request):
         raise HTTPException(status_code=503, detail="Telegram adapter not configured")
     notification = await messaging.handle_incoming("telegram", body)
     return notification.model_dump(mode="json")
+
+
+@app.get("/tasks")
+async def list_tasks():
+    """List running and completed background tasks."""
+    return task_queue.list_tasks()
+
+
+@app.get("/tasks/{task_id}")
+async def get_task(task_id: str):
+    """Get the status/result of a background task."""
+    result = task_queue.get_result(task_id)
+    if result:
+        return result.model_dump(mode="json")
+    status = task_queue.get_status(task_id)
+    if status == "unknown":
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"task_id": task_id, "status": status}
