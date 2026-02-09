@@ -33,6 +33,46 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL = 1  # seconds
 
 
+async def _send_help(client, api_base, chat_id, registry):
+    """Short help nudge for non-command messages."""
+    await client.post(
+        f"{api_base}/sendMessage",
+        json={
+            "chat_id": chat_id,
+            "text": (
+                "Type /help to see all agents and commands.\n\n"
+                "Quick examples:\n"
+                '/claude_agent ask "What is AI?"\n'
+                '/research_agent summarize "Some text"\n'
+                "/agent_manager list"
+            ),
+        },
+    )
+
+
+async def _send_full_help(client, api_base, chat_id, registry):
+    """Full agent directory with every agent and action."""
+    lines = ["All available agents and commands:\n"]
+    for agent_desc in registry.list_agents():
+        ns = agent_desc["namespace"]
+        lines.append(f"/{ns}")
+        if agent_desc.get("description"):
+            lines.append(f"  {agent_desc['description']}")
+        caps = agent_desc.get("capabilities", [])
+        if caps:
+            for cap in caps:
+                lines.append(f"  - /{ns} {cap}")
+        else:
+            lines.append("  (no actions yet)")
+        lines.append("")
+
+    lines.append("Tip: /agent_manager help — manage custom agents")
+    await client.post(
+        f"{api_base}/sendMessage",
+        json={"chat_id": chat_id, "text": "\n".join(lines)},
+    )
+
+
 async def main():
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     if not token:
@@ -106,18 +146,12 @@ async def main():
 
                     if not text.startswith("/"):
                         # Send a help message for non-command text
-                        await client.post(
-                            f"{api_base}/sendMessage",
-                            json={
-                                "chat_id": chat_id,
-                                "text": (
-                                    "Send a command like:\n"
-                                    '/research_agent run_autonomous_research "Quantum Computing"\n\n'
-                                    "Available agents: "
-                                    + ", ".join(registry.namespaces)
-                                ),
-                            },
-                        )
+                        await _send_help(client, api_base, chat_id, registry)
+                        continue
+
+                    # /help or /start → show full agent directory
+                    if text.strip() in ("/help", "/start"):
+                        await _send_full_help(client, api_base, chat_id, registry)
                         continue
 
                     # Process through the full pipeline

@@ -154,10 +154,20 @@ class AgentManager(BaseAgent):
         agents = self.registry.list_agents()
         lines = []
         for a in agents:
-            caps = ", ".join(a["capabilities"]) or "(no actions)"
-            lines.append(f"/{a['namespace']} — {caps}")
-        return self._reply(payload, NotificationStatus.COMPLETED,
-                           "Registered agents:\n\n" + "\n".join(lines))
+            lines.append(f"/{a['namespace']}")
+            if a.get("description"):
+                lines.append(f"  {a['description']}")
+            caps = a.get("capabilities", [])
+            if caps:
+                for cap in caps:
+                    lines.append(f"  - /{a['namespace']} {cap}")
+            else:
+                lines.append("  (no actions)")
+            lines.append("")  # blank line between agents
+        return self._reply(
+            payload, NotificationStatus.COMPLETED,
+            "All registered agents:\n\n" + "\n".join(lines).rstrip(),
+        )
 
     def _info(self, payload: AgentPayload, query: str) -> Notification:
         name = query.strip()
